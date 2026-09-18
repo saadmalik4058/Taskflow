@@ -1,6 +1,7 @@
 const express = require("express");
 
 const authRoutes = require("./routes/authRoutes");
+const projectRoutes = require("./routes/projectRoutes");
 
 const app = express();
 
@@ -13,5 +14,6 @@ app.get("/", (req, res) => {
 });
 
 app.use(authRoutes);
+app.use(projectRoutes);
 
 module.exports = app;
