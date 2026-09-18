@@ -70,9 +70,21 @@ const createTask = async (req, res) => {
 
 const getTasks = async (req, res) => {
     try {
-        const tasks = await Task.find({
+        const { status, priority } = req.query;
+
+        const filter = {
             createdBy: req.user.id
-        });
+        };
+
+        if (status) {
+            filter.status = status;
+        }
+
+        if (priority) {
+            filter.priority = priority;
+        }
+
+        const tasks = await Task.find(filter);
 
         res.status(200).json({
             tasks
