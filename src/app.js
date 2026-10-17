@@ -1,13 +1,38 @@
 const express = require("express");
+const helmet = require("helmet");
+const cors = require("cors");
 
 const authRoutes = require("./routes/authRoutes");
 const projectRoutes = require("./routes/projectRoutes");
 const taskRoutes = require("./routes/taskRoutes");
 const { notFound, errorHandler } = require("./middleware/errorHandler");
+const { generalLimiter } = require("./middleware/rateLimiters");
+const { corsOptions } = require("./config/cors");
 
 const app = express();
 
+// Helmet adds a set of protective response headers and removes the
+// "X-Powered-By: Express" header, so attackers cannot fingerprint the
+// framework and browser protections are enabled by default.
+//
+// crossOriginResourcePolicy is relaxed to "cross-origin" because this is
+// an API: the future frontend on another origin must be able to read
+// responses. The default ("same-origin") would block that in some browsers.
+app.use(
+    helmet({
+        crossOriginResourcePolicy: { policy: "cross-origin" }
+    })
+);
+
+// Must run before the routes so preflight OPTIONS requests are answered
+// and every response carries the correct CORS headers.
+app.use(cors(corsOptions));
+
 app.use(express.json());
+
+// One shared limit across all routes, on top of the stricter limit that
+// /register and /login apply individually.
+app.use(generalLimiter);
 
 app.get("/", (req, res) => {
     res.json({
