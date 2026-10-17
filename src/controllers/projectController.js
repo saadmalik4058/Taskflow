@@ -1,4 +1,5 @@
 const Project = require("../models/Project");
+const Task = require("../models/Task");
 
 // NOTE: No try/catch here. Express 5 forwards any error thrown in these
 // async handlers to src/middleware/errorHandler.js.
@@ -100,6 +101,17 @@ const deleteProject = async (req, res) => {
             message: "You are not allowed to delete this project"
         });
     }
+
+    // Cascade delete: MongoDB has no foreign keys and no automatic
+    // "on delete cascade" like SQL databases, so we must remove the
+    // child tasks ourselves. Without this, the tasks would stay in the
+    // database pointing at a project that no longer exists (orphans).
+    //
+    // Order matters. We delete the tasks FIRST and the project SECOND:
+    // if the second operation fails, the worst case is a project that
+    // has lost some tasks, which is visible and recoverable. Doing it
+    // the other way around could leave orphaned tasks behind again.
+    await Task.deleteMany({ project: project._id });
 
     await Project.findByIdAndDelete(req.params.id);
 
