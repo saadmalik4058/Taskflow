@@ -243,7 +243,22 @@ const updateTask = async (req, res) => {
         }
 
         if (assignedTo !== undefined) {
-            task.assignedTo = assignedTo;
+            // null means the client wants to remove the assignment.
+            if (assignedTo === null) {
+                task.assignedTo = null;
+            } else {
+                // Same rule as createTask: we do not only check that the
+                // ID is valid, we check that the user actually exists.
+                const assignedUser = await User.findById(assignedTo);
+
+                if (!assignedUser) {
+                    return res.status(404).json({
+                        message: "Assigned user not found"
+                    });
+                }
+
+                task.assignedTo = assignedTo;
+            }
         }
 
         const updatedTask = await task.save();
