@@ -24,6 +24,9 @@ const projectSchema = new mongoose.Schema(
     }
 );
 
+// Index for the main project listing: getProjects filters by createdBy.
+projectSchema.index({ createdBy: 1 });
+
 const Project = mongoose.model("Project", projectSchema);
 
 module.exports = Project;
