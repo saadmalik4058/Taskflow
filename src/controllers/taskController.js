@@ -68,9 +68,53 @@ const createTask = async (req, res) => {
     }
 };
 
+
+
 const getTasks = async (req, res) => {
     try {
-        const { status, priority } = req.query;
+        const {
+            status,
+            priority,
+            search,
+            page = 1,
+            limit = 10,
+            sortBy = "createdAt",
+            order = "desc"
+        } = req.query;
+
+        const allowedSortFields = [
+            "createdAt",
+            "updatedAt",
+            "title",
+            "dueDate",
+            "priority"
+        ];
+
+        const allowedOrders = ["asc", "desc"];
+
+        const pageNumber = Number(page);
+        const limitNumber = Number(limit);
+
+        if (
+            !Number.isInteger(pageNumber) ||
+            pageNumber < 1 ||
+            !Number.isInteger(limitNumber) ||
+            limitNumber < 1 ||
+            limitNumber > 100
+        ) {
+            return res.status(400).json({
+                message: "Page must be >= 1 and limit must be between 1 and 100"
+            });
+        }
+
+        if (
+            !allowedSortFields.includes(sortBy) ||
+            !allowedOrders.includes(order)
+        ) {
+            return res.status(400).json({
+                message: "Invalid sortBy or order value"
+            });
+        }
 
         const filter = {
             createdBy: req.user.id
@@ -84,9 +128,34 @@ const getTasks = async (req, res) => {
             filter.priority = priority;
         }
 
-        const tasks = await Task.find(filter);
+        if (search) {
+            const escapedSearch = search.replace(
+                /[.*+?^${}()|[\]\\]/g,
+                "\\$&"
+            );
+
+            filter.$or = [
+                { title: { $regex: escapedSearch, $options: "i" } },
+                { description: { $regex: escapedSearch, $options: "i" } }
+            ];
+        }
+
+        const sortDirection = order === "asc" ? 1 : -1;
+        const skip = (pageNumber - 1) * limitNumber;
+
+        const [tasks, totalTasks] = await Promise.all([
+            Task.find(filter)
+                .sort({ [sortBy]: sortDirection, _id: sortDirection })
+                .skip(skip)
+                .limit(limitNumber),
+            Task.countDocuments(filter)
+        ]);
 
         res.status(200).json({
+            totalTasks,
+            currentPage: pageNumber,
+            totalPages: Math.ceil(totalTasks / limitNumber),
+            pageSize: limitNumber,
             tasks
         });
 
@@ -97,6 +166,8 @@ const getTasks = async (req, res) => {
         });
     }
 };
+
+
 
 const getTaskById = async (req, res) => {
     try {

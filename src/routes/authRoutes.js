@@ -16,6 +16,9 @@ router.post("/register", register);
 router.post("/login", login);
 
 router.get("/profile", auth, getProfile);
-router.get("/users", auth, getUsers);
+
+const authorize = require("../middleware/authorize");
+
+router.get("/users", auth, authorize("admin"), getUsers);
 
 module.exports = router;
