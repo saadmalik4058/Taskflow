@@ -20,7 +20,15 @@ on:
 jobs:
   test:
     name: Tests (Node ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
+
+    # Pinned to an explicit Ubuntu release instead of "ubuntu-latest".
+    # GitHub periodically moves the "ubuntu-latest" label to a newer Ubuntu
+    # (it migrates to Ubuntu 26 starting 19 Oct 2026). These tests download a
+    # prebuilt mongod binary and load platform-specific native modules
+    # (bcrypt, unrs-resolver, @parcel/watcher), so an unannounced glibc change
+    # could break a run for reasons that have nothing to do with our code.
+    # Pinning keeps the environment reproducible; bump this deliberately.
+    runs-on: ubuntu-24.04
 
     strategy:
       # If one Node version fails we still want the other to finish, so a
