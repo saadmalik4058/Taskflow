@@ -1,0 +1,56 @@
+# Continuous Integration.
+#
+# Runs the test suite automatically on every push to main and on every
+# pull request. If a commit breaks something, GitHub shows a red X right
+# next to it instead of you finding out days later.
+#
+# Nothing needs to be configured for this to work:
+#   - No database service is required, because the tests start their own
+#     throwaway MongoDB (mongodb-memory-server).
+#   - No repository secrets are required, because tests/setupEnv.js sets
+#     its own throwaway JWT_SECRET before any application code loads.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      # If one Node version fails we still want the other to finish, so a
+      # single run tells us whether the problem is version-specific.
+      fail-fast: false
+
+      matrix:
+        # mongoose, mongodb and mongodb-memory-server all require
+        # Node >= 20.19.0, and Node 20 is end-of-life, so we test the two
+        # supported lines instead. Node 22 is in maintenance LTS and
+        # Node 24 is the active LTS.
+        node-version: [22.x, 24.x]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          # Caches the npm download cache, which makes npm ci faster on
+          # repeat runs.
+          cache: npm
+
+      - name: Install dependencies
+        # npm ci (not npm install): installs the exact versions recorded in
+        # package-lock.json and fails if they disagree. Reproducible builds
+        # are what we want in CI, not "whatever is newest today".
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
