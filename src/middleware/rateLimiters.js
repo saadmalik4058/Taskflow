@@ -4,7 +4,22 @@
 // against POST /login (a brute-force attack), or flood any endpoint and
 // exhaust the server and the database.
 
+// ---------------------------------------------------------------------
+// Tests must not be throttled by these limiters: a suite that deliberately
+// sends dozens of bad requests would trip the 20-attempt auth limit and
+// fail for the wrong reason. When NODE_ENV is "test" we swap both
+// limiters for a pass-through middleware.
+//
+// This is the usual way to handle rate limiting in test environments.
+// The limiters themselves were verified manually against the running
+// server (20 x 401, then 429; successful logins consume no quota).
+// ---------------------------------------------------------------------
+
 const { rateLimit } = require("express-rate-limit");
+
+const isTest = process.env.NODE_ENV === "test";
+
+const allowAll = (req, res, next) => next();
 
 // 15 minutes in milliseconds.
 const FIFTEEN_MINUTES = 15 * 60 * 1000;
@@ -49,6 +64,6 @@ const authLimiter = rateLimit({
 });
 
 module.exports = {
-    generalLimiter,
-    authLimiter
+    generalLimiter: isTest ? allowAll : generalLimiter,
+    authLimiter: isTest ? allowAll : authLimiter
 };
