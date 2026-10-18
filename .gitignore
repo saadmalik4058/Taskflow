@@ -1,2 +1,21 @@
+# Dependencies
 node_modules/
+
+# Environment files. These hold real secrets and must never be committed.
+# ".env.example" is the safe template that IS committed, so we re-include it.
 .env
+.env.local
+.env.*.local
+!.env.example
+
+# Test output
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
