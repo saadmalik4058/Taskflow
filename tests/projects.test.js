@@ -5,10 +5,29 @@ const {
     request,
     authHeader,
     registerAndLogin,
-    createProject
+    createProject,
+    createTask
 } = require("./helpers");
 
 const randomId = () => new mongoose.Types.ObjectId().toString();
+
+// A project owned by alice with one task handed to bob. That is the
+// minimum setup for "somebody who does not own the project, but has a
+// reason to see it".
+const projectWithAssignee = async () => {
+    const alice = await registerAndLogin();
+    const bob = await registerAndLogin();
+
+    const created = await createProject(alice.token);
+    const projectId = created.body.project._id;
+
+    const task = await createTask(alice.token, projectId, {
+        title: "Handed over",
+        assignedTo: bob.userId
+    });
+
+    return { alice, bob, projectId, taskId: task.body.task._id };
+};
 
 describe("Projects", () => {
     describe("POST /projects", () => {
@@ -132,6 +151,55 @@ describe("Projects", () => {
                 ])
             );
         });
+
+        it("returns 403 to a user with no relationship to the project", async () => {
+            const alice = await registerAndLogin();
+            const stranger = await registerAndLogin();
+            const created = await createProject(alice.token);
+
+            const res = await request(app)
+                .get(`/projects/${created.body.project._id}`)
+                .set(...authHeader(stranger.token));
+
+            expect(res.status).toBe(403);
+        });
+
+        it("lets the assignee of a task read the project", async () => {
+            const { bob, projectId } = await projectWithAssignee();
+
+            const res = await request(app)
+                .get(`/projects/${projectId}`)
+                .set(...authHeader(bob.token));
+
+            expect(res.status).toBe(200);
+            expect(res.body.project.name).toBe("Test Project");
+        });
+
+        it("does not add the project to the assignee's project list", async () => {
+            const { bob } = await projectWithAssignee();
+
+            const res = await request(app)
+                .get("/projects")
+                .set(...authHeader(bob.token));
+
+            expect(res.status).toBe(200);
+            expect(res.body.projects).toHaveLength(0);
+        });
+
+        it("revokes project access once the task is unassigned", async () => {
+            const { alice, bob, projectId, taskId } = await projectWithAssignee();
+
+            await request(app)
+                .put(`/tasks/${taskId}`)
+                .set(...authHeader(alice.token))
+                .send({ assignedTo: null });
+
+            const res = await request(app)
+                .get(`/projects/${projectId}`)
+                .set(...authHeader(bob.token));
+
+            expect(res.status).toBe(403);
+        });
     });
 
     describe("PUT /projects/:id", () => {
@@ -150,8 +218,18 @@ describe("Projects", () => {
             expect(res.status).toBe(200);
             expect(res.body.message).toBe("Project updated successfully");
             expect(res.body.project.name).toBe("New name");
-            // Not sent, so it must be untouched (partial update).
             expect(res.body.project.description).toBe("Old description");
+        });
+
+        it("still refuses an assignee trying to update the project", async () => {
+            const { bob, projectId } = await projectWithAssignee();
+
+            const res = await request(app)
+                .put(`/projects/${projectId}`)
+                .set(...authHeader(bob.token))
+                .send({ name: "Renamed by assignee" });
+
+            expect(res.status).toBe(403);
         });
 
         it("cannot be used to change createdBy", async () => {
@@ -180,6 +258,16 @@ describe("Projects", () => {
     });
 
     describe("DELETE /projects/:id", () => {
+        it("still refuses an assignee trying to delete the project", async () => {
+            const { bob, projectId } = await projectWithAssignee();
+
+            const res = await request(app)
+                .delete(`/projects/${projectId}`)
+                .set(...authHeader(bob.token));
+
+            expect(res.status).toBe(403);
+        });
+
         it("deletes the project and makes it unreachable", async () => {
             const { token } = await registerAndLogin();
             const created = await createProject(token);

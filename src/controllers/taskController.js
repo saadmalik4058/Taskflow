@@ -5,6 +5,39 @@ const User = require("../models/User");
 // NOTE: No try/catch here. Express 5 forwards any error thrown in these
 // async handlers to src/middleware/errorHandler.js.
 
+// ---------------------------------------------------------------------
+// PERMISSION HELPERS
+//
+// A task has TWO different relationships with users, and they grant
+// different rights:
+//
+//   createdBy  (ownership)      - the task is mine, I may do anything
+//   assignedTo (responsibility) - the task was handed to me to carry
+//                                 out, so I may read it and move its
+//                                 status
+//
+// They are kept as two separate named checks so that the two ideas do
+// not quietly get treated as one.
+// ---------------------------------------------------------------------
+
+const isCreator = (task, userId) => task.createdBy.toString() === userId;
+
+const isAssignee = (task, userId) =>
+    // assignedTo is optional, so it is often null/undefined. Without this
+    // guard, an unassigned task would crash on .toString().
+    Boolean(task.assignedTo) && task.assignedTo.toString() === userId;
+
+// Fields that only the task's CREATOR may change. An assignee may move
+// the status, because status describes how the work is going. It must not
+// be able to rewrite what the work IS, or to reassign the task away.
+const CREATOR_ONLY_FIELDS = [
+    "title",
+    "description",
+    "priority",
+    "dueDate",
+    "assignedTo"
+];
+
 const createTask = async (req, res) => {
     // Zod already guaranteed title, a valid project ID, valid status /
     // priority values and a parseable dueDate.
@@ -64,6 +97,7 @@ const getTasks = async (req, res) => {
     // are real numbers within range, sortBy and order are from the
     // allowed lists, and defaults are filled in. No manual checks needed.
     const {
+        scope,
         status,
         priority,
         search,
@@ -73,9 +107,21 @@ const getTasks = async (req, res) => {
         order
     } = req.query;
 
-    const filter = {
-        createdBy: req.user.id
-    };
+    // "scope" decides WHICH tasks belong to the caller. There are two
+    // honest answers to "show me my tasks":
+    //
+    //   created  -> the tasks I own (the original behaviour)
+    //   assigned -> the tasks I am responsible for, even ones somebody
+    //               else created
+    //
+    // These are separate views rather than filters that stack, because a
+    // task I created AND assigned to myself legitimately appears in both.
+    // Everything below (status, priority, search, sort, pagination) then
+    // narrows whichever set we picked here.
+    const filter =
+        scope === "assigned"
+            ? { assignedTo: req.user.id }
+            : { createdBy: req.user.id };
 
     if (status) {
         filter.status = status;
@@ -131,7 +177,10 @@ const getTaskById = async (req, res) => {
         });
     }
 
-    if (task.createdBy.toString() !== req.user.id) {
+    // Either relationship grants read access. Anyone else gets the same
+    // 403 as before: they must not be able to tell an existing task from
+    // a non-existing one.
+    if (!isCreator(task, req.user.id) && !isAssignee(task, req.user.id)) {
         return res.status(403).json({
             message: "You are not allowed to view this task"
         });
@@ -160,10 +209,37 @@ const updateTask = async (req, res) => {
         });
     }
 
-    if (task.createdBy.toString() !== req.user.id) {
+    const creator = isCreator(task, req.user.id);
+    const assignee = isAssignee(task, req.user.id);
+
+    if (!creator && !assignee) {
         return res.status(403).json({
             message: "You are not allowed to update this task"
         });
+    }
+
+    // An assignee may ONLY move the status. A creator may change anything.
+    //
+    // This is deliberately decided BEFORE a single field is written.
+    // Checking field by field while updating would let an assignee send
+    // {"status": "completed", "title": "mine now"}: the status change
+    // would be applied, and only then would the title be refused. The
+    // request as a whole must be allowed or refused as a whole.
+    //
+    // We test each value rather than reading Object.keys(req.body),
+    // because that way it does not matter whether the validation layer
+    // keeps keys whose value was never supplied.
+    if (!creator) {
+        const attempted = CREATOR_ONLY_FIELDS.filter(
+            (field) => req.body[field] !== undefined
+        );
+
+        if (attempted.length > 0) {
+            return res.status(403).json({
+                message:
+                    "You may only update the status of a task assigned to you"
+            });
+        }
     }
 
     // Fields the client did not send are undefined and are skipped, so a

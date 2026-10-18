@@ -58,6 +58,13 @@ const updateTaskSchema = z.object({
 // Query values always arrive as strings, so z.coerce.number()
 // converts "2" into the number 2 (and rejects "abc").
 const listTasksQuerySchema = z.object({
+    // Which set of tasks the caller is asking for:
+    //   "created"  -> tasks I created (the original behaviour)
+    //   "assigned" -> tasks assigned to me, including ones created by
+    //                 somebody else
+    // These are two separate views, not two filters that stack.
+    scope: z.enum(["created", "assigned"]).default("created"),
+
     status: taskStatus.optional(),
 
     priority: taskPriority.optional(),

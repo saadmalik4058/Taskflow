@@ -41,10 +41,28 @@ const getProjectById = async (req, res) => {
         });
     }
 
-    if (project.createdBy.toString() !== req.user.id) {
-        return res.status(403).json({
-            message: "You are not allowed to view this project"
+    const isOwner = project.createdBy.toString() === req.user.id;
+
+    if (!isOwner) {
+        // A task can be handed to somebody who does not own the project.
+        // Their task screen has to be able to say WHICH project the work
+        // belongs to, otherwise it can only show a bare project id it
+        // cannot resolve. So an assignee may read the project.
+        //
+        // This is deliberately NOT project membership. The assignee still
+        // does not appear in GET /projects, gains no rights to the other
+        // tasks in the project, and updateProject / deleteProject still
+        // require ownership.
+        const hasAssignedTask = await Task.exists({
+            project: project._id,
+            assignedTo: req.user.id
         });
+
+        if (!hasAssignedTask) {
+            return res.status(403).json({
+                message: "You are not allowed to view this project"
+            });
+        }
     }
 
     res.status(200).json({

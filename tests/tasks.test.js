@@ -266,6 +266,105 @@ describe("Tasks", () => {
 
             expect(res.body.tasks[0].title).toBe("Second");
         });
+
+        describe("scope", () => {
+            it("hides tasks assigned to me from the default listing", async () => {
+                const alice = await userWithProject();
+                const bob = await registerAndLogin();
+
+                await createTask(alice.token, alice.projectId, {
+                    title: "For Bob",
+                    assignedTo: bob.userId
+                });
+
+                const res = await listTasks(bob.token);
+
+                expect(res.status).toBe(200);
+                expect(res.body.totalTasks).toBe(0);
+            });
+
+            it("lists tasks assigned to me with scope=assigned", async () => {
+                const alice = await userWithProject();
+                const bob = await registerAndLogin();
+
+                await createTask(alice.token, alice.projectId, {
+                    title: "For Bob",
+                    assignedTo: bob.userId
+                });
+                await createTask(alice.token, alice.projectId, {
+                    title: "Not for Bob"
+                });
+
+                const res = await listTasks(bob.token, "?scope=assigned");
+
+                expect(res.status).toBe(200);
+                expect(res.body.totalTasks).toBe(1);
+                expect(res.body.tasks[0].title).toBe("For Bob");
+            });
+
+            it("excludes tasks I delegated, even with scope=assigned", async () => {
+                const alice = await userWithProject();
+                const bob = await registerAndLogin();
+
+                await createTask(alice.token, alice.projectId, {
+                    title: "Alice delegated this",
+                    assignedTo: bob.userId
+                });
+
+                const res = await listTasks(alice.token, "?scope=assigned");
+
+                expect(res.body.totalTasks).toBe(0);
+            });
+
+            it("still applies the status filter within scope=assigned", async () => {
+                const alice = await userWithProject();
+                const bob = await registerAndLogin();
+
+                await createTask(alice.token, alice.projectId, {
+                    title: "A",
+                    assignedTo: bob.userId,
+                    status: "pending"
+                });
+                await createTask(alice.token, alice.projectId, {
+                    title: "B",
+                    assignedTo: bob.userId,
+                    status: "completed"
+                });
+
+                const res = await listTasks(bob.token, "?scope=assigned&status=completed");
+
+                expect(res.body.totalTasks).toBe(1);
+                expect(res.body.tasks[0].title).toBe("B");
+            });
+
+            it("shows a self-assigned task in both scopes", async () => {
+                const alice = await userWithProject();
+
+                await createTask(alice.token, alice.projectId, {
+                    title: "My own work",
+                    assignedTo: alice.userId
+                });
+
+                const created = await listTasks(alice.token, "?scope=created");
+                const assigned = await listTasks(alice.token, "?scope=assigned");
+
+                expect(created.body.totalTasks).toBe(1);
+                expect(assigned.body.totalTasks).toBe(1);
+            });
+
+            it("rejects an unknown scope", async () => {
+                const { token } = await userWithProject();
+
+                const res = await listTasks(token, "?scope=everything");
+
+                expect(res.status).toBe(400);
+                expect(res.body.errors).toEqual(
+                    expect.arrayContaining([
+                        expect.objectContaining({ field: "scope" })
+                    ])
+                );
+            });
+        });
     });
 
     describe("GET /tasks/:id", () => {
@@ -289,6 +388,65 @@ describe("Tasks", () => {
                 .set(...authHeader(token));
 
             expect(res.status).toBe(404);
+        });
+
+        it("lets the assignee read the task", async () => {
+            const alice = await userWithProject();
+            const bob = await registerAndLogin();
+
+            const created = await createTask(alice.token, alice.projectId, {
+                title: "Handed over",
+                assignedTo: bob.userId
+            });
+
+            const res = await request(app)
+                .get(`/tasks/${created.body.task._id}`)
+                .set(...authHeader(bob.token));
+
+            expect(res.status).toBe(200);
+            expect(res.body.task.title).toBe("Handed over");
+        });
+
+        it("returns 403 to a user with no relationship to the task", async () => {
+            const alice = await userWithProject();
+            const stranger = await registerAndLogin();
+
+            const created = await createTask(alice.token, alice.projectId, {
+                title: "Private"
+            });
+
+            const res = await request(app)
+                .get(`/tasks/${created.body.task._id}`)
+                .set(...authHeader(stranger.token));
+
+            expect(res.status).toBe(403);
+        });
+
+        it("revokes the assignee's access once the task is unassigned", async () => {
+            const alice = await userWithProject();
+            const bob = await registerAndLogin();
+
+            const created = await createTask(alice.token, alice.projectId, {
+                title: "Briefly yours",
+                assignedTo: bob.userId
+            });
+            const id = created.body.task._id;
+
+            const before = await request(app)
+                .get(`/tasks/${id}`)
+                .set(...authHeader(bob.token));
+            expect(before.status).toBe(200);
+
+            await request(app)
+                .put(`/tasks/${id}`)
+                .set(...authHeader(alice.token))
+                .send({ assignedTo: null });
+
+            const after = await request(app)
+                .get(`/tasks/${id}`)
+                .set(...authHeader(bob.token));
+
+            expect(after.status).toBe(403);
         });
     });
 
@@ -365,6 +523,104 @@ describe("Tasks", () => {
             expect(res.status).toBe(200);
             // "project" is not part of updateTaskSchema, so it is stripped.
             expect(res.body.task.project).toBe(projectId);
+        });
+
+        it("returns 403 to a user with no relationship to the task", async () => {
+            const alice = await userWithProject();
+            const stranger = await registerAndLogin();
+
+            const created = await createTask(alice.token, alice.projectId, {
+                title: "Not yours"
+            });
+
+            const res = await request(app)
+                .put(`/tasks/${created.body.task._id}`)
+                .set(...authHeader(stranger.token))
+                .send({ status: "completed" });
+
+            expect(res.status).toBe(403);
+        });
+
+        it("lets the assignee move the status", async () => {
+            const alice = await userWithProject();
+            const bob = await registerAndLogin();
+
+            const created = await createTask(alice.token, alice.projectId, {
+                title: "Assigned work",
+                assignedTo: bob.userId
+            });
+
+            const res = await request(app)
+                .put(`/tasks/${created.body.task._id}`)
+                .set(...authHeader(bob.token))
+                .send({ status: "in-progress" });
+
+            expect(res.status).toBe(200);
+            expect(res.body.task.status).toBe("in-progress");
+        });
+
+        it("refuses an assignee trying to change the title", async () => {
+            const alice = await userWithProject();
+            const bob = await registerAndLogin();
+
+            const created = await createTask(alice.token, alice.projectId, {
+                title: "Original title",
+                assignedTo: bob.userId
+            });
+
+            const res = await request(app)
+                .put(`/tasks/${created.body.task._id}`)
+                .set(...authHeader(bob.token))
+                .send({ title: "Renamed by the assignee" });
+
+            expect(res.status).toBe(403);
+        });
+
+        it("refuses an assignee trying to reassign the task away", async () => {
+            const alice = await userWithProject();
+            const bob = await registerAndLogin();
+            const carol = await registerAndLogin();
+
+            const created = await createTask(alice.token, alice.projectId, {
+                title: "Assigned work",
+                assignedTo: bob.userId
+            });
+
+            const res = await request(app)
+                .put(`/tasks/${created.body.task._id}`)
+                .set(...authHeader(bob.token))
+                .send({ assignedTo: carol.userId });
+
+            expect(res.status).toBe(403);
+        });
+
+        it("applies nothing when an assignee mixes status with a forbidden field", async () => {
+            const alice = await userWithProject();
+            const bob = await registerAndLogin();
+
+            const created = await createTask(alice.token, alice.projectId, {
+                title: "Assigned work",
+                status: "pending",
+                assignedTo: bob.userId
+            });
+            const id = created.body.task._id;
+
+            const res = await request(app)
+                .put(`/tasks/${id}`)
+                .set(...authHeader(bob.token))
+                .send({ status: "completed", title: "Renamed by the assignee" });
+
+            expect(res.status).toBe(403);
+
+            // The important half: prove the request was NOT partly applied.
+            // A field-by-field implementation would have written the status
+            // change before noticing the forbidden title.
+            const check = await request(app)
+                .get(`/tasks/${id}`)
+                .set(...authHeader(alice.token));
+
+            expect(check.body.task.status).toBe("pending");
+            expect(check.body.task.title).toBe("Assigned work");
         });
     });
 

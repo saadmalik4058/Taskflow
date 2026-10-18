@@ -92,6 +92,25 @@ taskSchema.index({ createdBy: 1, status: 1, createdAt: -1, _id: -1 });
 // Same, when the client filters by priority.
 taskSchema.index({ createdBy: 1, priority: 1, createdAt: -1, _id: -1 });
 
+// ---------------------------------------------------------------------
+// ASSIGNMENT
+//
+// getTasks with scope=assigned filters by assignedTo instead of createdBy,
+// so it needs its own indexes for exactly the same reason: without them,
+// "tasks assigned to me" would read every task in the collection and sort
+// the matches in memory, even though the client only asked for 10.
+//
+// Note that assignedTo CAN be missing on a task. MongoDB indexes treat a
+// missing field as null, and we always query a concrete user id, so those
+// documents simply never match.
+// ---------------------------------------------------------------------
+
+// "Tasks assigned to me", newest first.
+taskSchema.index({ assignedTo: 1, createdAt: -1, _id: -1 });
+
+// Same, when the assignee also filters by status.
+taskSchema.index({ assignedTo: 1, status: 1, createdAt: -1, _id: -1 });
+
 // Supports "all tasks of one project" and makes the cascade delete in
 // deleteProject (Task.deleteMany({ project })) an indexed lookup.
 taskSchema.index({ project: 1 });
