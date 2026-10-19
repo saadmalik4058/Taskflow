@@ -40,6 +40,19 @@ app.get("/", (req, res) => {
     });
 });
 
+// Health check endpoint for load balancers, Docker, and hosting platforms.
+// Returns 200 if the process is up. Does NOT check DB — that's a separate
+// "readiness" check. Keeping it simple: if Node is running, the API can
+// receive requests (DB errors will surface on actual routes).
+app.get("/health", (req, res) => {
+    res.status(200).json({
+        status: "ok",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        env: process.env.NODE_ENV || "development"
+    });
+});
+
 app.use(authRoutes);
 app.use(projectRoutes);
 
